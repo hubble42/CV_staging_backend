@@ -1,4 +1,7 @@
 from fastapi import FastAPI, File, Form, UploadFile
+from typing import Union, Dict, Any
+from pydantic import BaseModel
+from fastapi.exceptions import HTTPException
 
 # from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -116,18 +119,33 @@ object_dict = {object: index for index, object in enumerate(objects)}
 CSV_FILE_PATH = "C:/Users/DELL/object-detection/backend/users.csv"
 
 
-def check_existing_user(username: str, email: str) -> bool:
+class UserCredentials(BaseModel):
+    email: str
+    password: str
+
+
+def check_existing_user(username: str, email: str) -> Union[bool, Dict[str, Any]]:
     # Check if the CSV file exists
     if not os.path.isfile(CSV_FILE_PATH):
         return False
 
+    # Check if the CSV file is empty
+    if os.path.getsize(CSV_FILE_PATH) == 0:
+        return False
+
     # Load the CSV file using pandas
-    df = pd.read_csv(CSV_FILE_PATH)
+    df = pd.read_csv(
+        CSV_FILE_PATH, header=None, names=["username", "email", "password"]
+    )
 
     # Check if the username or email already exists
     existing_user = df[(df["username"] == username) | (df["email"] == email)]
 
-    return len(existing_user) > 0
+    if len(existing_user) > 0:
+        existing_user_data = existing_user.iloc[0].to_dict()
+        return existing_user_data
+    else:
+        return False
 
 
 def write_user_data(user_data: dict):
@@ -146,15 +164,51 @@ def write_user_data(user_data: dict):
         writer.writerow(user_data)
 
 
+def validate_login(email: str, password: str) -> Union[bool, Dict[str, Any]]:
+    # Check if the CSV file exists
+    if not os.path.isfile(CSV_FILE_PATH):
+        return False
+
+    # Check if the CSV file is empty
+    if os.path.getsize(CSV_FILE_PATH) == 0:
+        return False
+
+    # Load the CSV file using pandas
+    df = pd.read_csv(
+        CSV_FILE_PATH, header=None, names=["username", "email", "password"]
+    )
+
+    # Check if the username or email already exists
+    existing_user = df[(df["email"] == email) | (df["password"] == password)]
+
+    if len(existing_user) > 0:
+        existing_user_data = existing_user.iloc[0].to_dict()
+        return existing_user_data
+    else:
+        return False
+
+
+@app.post("/login/")
+def login(data: dict):
+    email = data.get("email")
+    password = data.get("password")
+    existing_user = validate_login(email, password)
+    if existing_user:
+        print(existing_user)
+        return {"message": "login Successful"}
+    else:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+
 @app.post("/signup")
 def signup(user_data: dict):
     username = user_data.get("username")
     email = user_data.get("email")
     password = user_data.get("password")
 
-    if check_existing_user(username, email):
-        return {"message": "Username or email already exists"}
-
+    existing_user = check_existing_user(username, email)
+    if existing_user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
     write_user_data(user_data)
     return {"message": "Signup Successful"}
 
@@ -166,7 +220,12 @@ async def pre_loaded_classes():
 
 @app.post("/upload_image_file/")
 async def create_upload_file(file: UploadFile = File(...)):
+    print(file.filename)
     file_path = f"C:/Users/DELL/object-detection/backend/saved-files/{file.filename}"
+
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+
     with open(file_path, "rb") as file_object:
         encoded_string1 = base64.b64encode(file_object.read())
 
